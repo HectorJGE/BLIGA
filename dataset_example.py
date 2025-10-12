@@ -1,4 +1,4 @@
-from .data import RecsData
+from data import RecsData
 
 def build_example_dataset() -> RecsData:
     ratings = {

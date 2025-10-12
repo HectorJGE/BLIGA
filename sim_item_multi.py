@@ -1,6 +1,6 @@
 import math
-from typing import Dict, Set, Any
-from .data import ItemId, Category, RecsData
+from typing import Dict, Set, Any, Optional
+from data import ItemId, Category, RecsData
 
 def jaccard(a: Set, b: Set) -> float:
     if not a and not b: return 0.0
@@ -8,7 +8,7 @@ def jaccard(a: Set, b: Set) -> float:
     union = len(a | b)
     return inter / union if union else 0.0
 
-def sim_year(y1: int | None, y2: int | None, max_gap: int = 20) -> float:
+def sim_year(y1: Optional[int], y2: Optional[int], max_gap: int = 20) -> float:
     if not y1 or not y2: return 0.0
     gap = min(abs(y1 - y2), max_gap)
     return 1.0 - gap / max_gap  # lineal; 1 si igual, 0 si dif ≥ max_gap

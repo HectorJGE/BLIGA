@@ -1,6 +1,6 @@
 from typing import List
-from .data import RecsData, ItemId
-from .sim_item_multi import item_similarity_multi
+from data import RecsData, ItemId
+from sim_item_multi import item_similarity_multi
 
 def correlation_of_individual_multi(ind: List[ItemId], data: RecsData) -> float:
     n = len(ind)

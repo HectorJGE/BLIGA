@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Set, List, Any
+from typing import Dict, Set, List, Any, Optional
 
 UserId = str
 ItemId = str
@@ -10,7 +10,7 @@ class RecsData:
     ratings: Dict[UserId, Dict[ItemId, float]]
     item_categories: Dict[ItemId, Set[Category]]
     # === NUEVO ===
-    item_meta: Dict[ItemId, Dict[str, Any]] | None = None
+    item_meta: Optional[Dict[ItemId, Dict[str, Any]]] = None
 
     def items(self) -> Set[ItemId]:
         rated_items = {i for ur in self.ratings.values() for i in ur.keys()}
