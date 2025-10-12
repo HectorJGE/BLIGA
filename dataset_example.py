@@ -1,16 +1,10 @@
-from data import RecsData
+from .data import RecsData
 
 def build_example_dataset() -> RecsData:
-    """
-    Devuelve un dataset pequeño de ejemplo con:
-    - 3 usuarios
-    - 6 ítems
-    - Categorías de películas
-    """
     ratings = {
-        "u1": {"I1": 5, "I2": 4},       # Usuario 1 calificó 2 ítems
-        "u2": {"I2": 3, "I3": 5},       # Usuario 2 calificó 2 ítems
-        "u3": {"I1": 2, "I4": 4, "I5": 3},  # Usuario 3 calificó 3 ítems
+        "u1": {"I1": 5, "I2": 4},
+        "u2": {"I2": 3, "I3": 5},
+        "u3": {"I1": 2, "I4": 4, "I5": 3},
     }
 
     item_categories = {
@@ -22,9 +16,14 @@ def build_example_dataset() -> RecsData:
         "I6": {"acción", "aventura"},
     }
 
-    return RecsData(ratings=ratings, item_categories=item_categories)
+    # === NUEVO: metadata sencilla por ítem ===
+    item_meta = {
+        "I1": {"director": "D1", "año": 2010, "actores": {"A1", "A2"}},
+        "I2": {"director": "D1", "año": 2012, "actores": {"A2"}},
+        "I3": {"director": "D2", "año": 2008, "actores": {"A3"}},
+        "I4": {"director": "D3", "año": 2011, "actores": {"A2", "A4"}},
+        "I5": {"director": "D4", "año": 2005, "actores": {"A5"}},
+        "I6": {"director": "D1", "año": 2016, "actores": {"A6"}},
+    }
 
-if __name__ == "__main__":
-    data = build_example_dataset()
-    print("Todos los ítems:", data.items())
-    print("Ítems no calificados por u1:", data.unrated_items_for("u1"))
+    return RecsData(ratings=ratings, item_categories=item_categories, item_meta=item_meta)

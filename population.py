@@ -3,6 +3,7 @@ import random
 from typing import List
 from data import RecsData, ItemId, UserId
 from correlation import correlation_of_individual
+from correlation_multi import correlation_of_individual_multi
 
 def generate_initial_population(
     data: RecsData,
@@ -39,6 +40,12 @@ def select_top_by_correlation(
         (correlation_of_individual(ind, data.item_categories), ind)
         for ind in population
     ]
+    scored.sort(key=lambda t: t[0], reverse=True)
+    k = max(1, math.ceil(topX * len(population)))
+    return [ind for _, ind in scored[:k]]
+
+def select_top_by_correlation_multi(population: List[List[ItemId]], data: RecsData, topX: float) -> List[List[ItemId]]:
+    scored = [(correlation_of_individual_multi(ind, data), ind) for ind in population]
     scored.sort(key=lambda t: t[0], reverse=True)
     k = max(1, math.ceil(topX * len(population)))
     return [ind for _, ind in scored[:k]]
