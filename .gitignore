@@ -1,2 +1,5 @@
 ./venv
 venv/
+./the-movies-dataset
+the-movies-dataset/
+/the-movies-dataset/

@@ -1,8 +1,10 @@
-from dataset_example import build_example_dataset
+from data_loader_tmdb import load_tmdb_dataset
 from ga_weights import train_weights
 
 # 1️⃣ Cargar dataset de ejemplo
-data = build_example_dataset()
+    
+data = load_tmdb_dataset(path="the-movies-dataset")
+
 
 # 2️⃣ Crear una lista de (usuario, ítem, rating real)
 samples = [(u, i, r) for u, ratings in data.ratings.items() for i, r in ratings.items()]

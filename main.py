@@ -7,7 +7,7 @@ from prediction import predict_individual
 from score_aggregator import aggregate_individual
 from adaptive import schedule_rates  # tasas adaptativas
 import numpy as np
-
+from data_loader_tmdb import load_tmdb_dataset
 
 def run_bliga(
     target_user: str,
@@ -20,7 +20,8 @@ def run_bliga(
     seed: int = 42
 ):
     rng = random.Random(seed)
-    data = build_example_dataset()
+    
+    data = load_tmdb_dataset(path="the-movies-dataset")
 
     # 1️⃣ Población inicial
     population = generate_initial_population(data, target_user, M, N, rng)
