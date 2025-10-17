@@ -3,3 +3,4 @@ venv/
 ./the-movies-dataset
 the-movies-dataset/
 /the-movies-dataset/
+/__pycache__/

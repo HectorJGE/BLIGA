@@ -1,70 +1,129 @@
-import pandas as pd, ast, re
-from data import RecsData
+# data_loader_tmdb.py
+import pandas as pd, re
+from typing import Dict, Set, Any
+from data import RecsData, ItemId, Category
 
-def parse_list(x):
-    try:
-        data = ast.literal_eval(x)
-        if isinstance(data, list):
-            return {d["name"] for d in data if isinstance(d, dict) and "name" in d}
-        return set()
-    except:
-        return set()
-
-def extract_director(crew_str):
-    try:
-        crew = ast.literal_eval(crew_str)
-        for c in crew:
-            if isinstance(c, dict) and c.get("job") == "Director":
-                return c.get("name")
-    except:
-        pass
-    return None
-
-def extract_year(date_str):
-    if not isinstance(date_str, str):
-        return None
-    m = re.match(r"(\d{4})", date_str)
+# Helpers rápidos (sin ast.literal_eval ni iterrows sobre 45k filas)
+def _year(s: str):
+    if not isinstance(s, str): return None
+    m = re.match(r"(\d{4})", s)
     return int(m.group(1)) if m else None
 
-def load_tmdb_dataset(path="the-movies-dataset"):
+# extrae todos los valores de "name" tanto con ' ' como con " "
+_NAME_RE = re.compile(r'''["']name["']\s*:\s*["']([^"']+)["']''')
+def _names(s: str) -> Set[str]:
+    if not isinstance(s, str): return set()
+    return {m.group(1).strip() for m in _NAME_RE.finditer(s)}
+
+# busca Director dentro de crew
+_DIRECTOR_RE = re.compile(
+    r''' \{ [^{}]* ["']job["']\s*:\s*["']Director["'] [^{}]* ["']name["']\s*:\s*["']([^"']+)["'] ''',
+    re.X
+)
+def _director(s: str):
+    if not isinstance(s, str): return None
+    m = _DIRECTOR_RE.search(s)
+    return m.group(1).strip() if m else None
+
+def load_tmdb_dataset(path: str = "the-movies-dataset",
+                      use_small: bool = True) -> RecsData:
+    """
+    Carga The Movies Dataset mapeando MovieLens→TMDB vía links(_small).csv.
+    - Devuelve RecsData con claves de ítem = movieId (MovieLens)  ← importante
+    - Filtra movies/credits SOLO a los títulos que aparecen en ratings
+    - Usa extracción por regex (rápido) para géneros/actores/director
+    """
     print("📂 Cargando dataset desde:", path)
-    movies = pd.read_csv(f"{path}/movies_metadata.csv", low_memory=False)
-    credits = pd.read_csv(f"{path}/credits.csv")
-    ratings = pd.read_csv(f"{path}/ratings_small.csv")
 
-    # merge por id
-    credits["id"] = credits["id"].astype(str)
-    movies["id"] = movies["id"].astype(str)
-    movies = movies.merge(credits, on="id", how="left")
+    # 1) ratings + links (MovieLens)
+    ratings_path = f"{path}/{'ratings_small.csv' if use_small else 'ratings.csv'}"
+    links_path   = f"{path}/{'links_small.csv'   if use_small else 'links.csv'}"
 
-    item_categories = {}
-    item_meta = {}
+    ratings = pd.read_csv(ratings_path, usecols=["userId", "movieId", "rating"])
+    links   = pd.read_csv(links_path,   usecols=["movieId", "tmdbId"])
 
-    for _, row in movies.iterrows():
-        mid = str(row["id"])
-        genres = parse_list(row.get("genres"))
-        director = extract_director(row.get("crew"))
-        cast = parse_list(row.get("cast"))
-        year = extract_year(row.get("release_date"))
-        pop_val = row.get("popularity")
+    ratings["movieId"] = ratings["movieId"].astype(str)
+    links["movieId"]   = links["movieId"].astype(str)
+    # quedarnos sólo con pelis que realmente aparecen en ratings y tienen tmdb válido
+    links = links[links["movieId"].isin(ratings["movieId"].unique()) & links["tmdbId"].notna()]
+    links["tmdbId"] = links["tmdbId"].astype("Int64").astype(str)
+    tmdb_needed = set(links["tmdbId"].unique())
+
+    # 2) movies_metadata y credits filtrados a esos tmdbId
+    movies = pd.read_csv(
+        f"{path}/movies_metadata.csv",
+        usecols=["id", "genres", "release_date", "title", "original_title", "popularity"],
+        dtype=str, low_memory=False
+    )
+    movies = movies[movies["id"].isin(tmdb_needed)].copy()
+    movies["genres_set"] = movies["genres"].map(_names)
+    movies["year"]       = movies["release_date"].map(_year)
+    movies["popularity"] = pd.to_numeric(movies["popularity"], errors="coerce").fillna(0.0)
+
+    credits = pd.read_csv(f"{path}/credits.csv", usecols=["id", "cast", "crew"], dtype=str)
+    credits = credits[credits["id"].isin(tmdb_needed)].copy()
+    credits["actors_set"] = credits["cast"].map(_names)
+    credits["director"]   = credits["crew"].map(_director)
+
+    movies["genres_set"] = movies["genres_set"].astype(object)
+    credits["actors_set"] = credits["actors_set"].astype(object)
+
+    # 3) movieId -> tmdbId -> metadatos
+    meta = links.merge(
+        movies[["id", "genres_set", "year", "popularity", "title", "original_title"]],
+        left_on="tmdbId", right_on="id", how="left"
+    ).merge(
+        credits[["id", "actors_set", "director"]],
+        on="id", how="left"
+    )
+
+    # 4) construir RecsData (clave = movieId)  — versión robusta contra NaN
+    item_categories: Dict[ItemId, Set[Category]] = {}
+    item_meta: Dict[ItemId, Dict[str, Any]] = {}
+
+    def _to_set(x):
+        if isinstance(x, (set, frozenset)):
+            return set(x)
+        if isinstance(x, (list, tuple)):
+            return set(x)
+        # cualquier otro (NaN, None, float, str, etc.) -> set vacío
+        return set()
+
+    for row in meta.itertuples(index=False):
+        mv = str(row.movieId)
+
+        # nunca iterar sobre NaN
+        gset   = _to_set(getattr(row, "genres_set", None))
+        actors = _to_set(getattr(row, "actors_set", None))
+
+        # año seguro (si viene NaN/None queda None)
+        y = getattr(row, "year", None)
+        year = int(y) if isinstance(y, (int,)) or (isinstance(y, str) and y.isdigit()) else None
+
+        # popularidad segura
+        pop_raw = getattr(row, "popularity", 0.0)
         try:
-            popularity = float(pop_val)
-        except (ValueError, TypeError):
-            popularity = 0.0
+            pop = float(pop_raw) if pop_raw not in (None, "") else 0.0
+        except Exception:
+            pop = 0.0
 
-        item_categories[mid] = genres
-        item_meta[mid] = {
+        title = (getattr(row, "title", None) or getattr(row, "original_title", None) or mv)
+        director = getattr(row, "director", None) if isinstance(getattr(row, "director", None), str) else None
+
+        item_categories[mv] = gset
+        item_meta[mv] = {
             "director": director,
-            "actores": cast,
+            "actores": actors,
             "año": year,
-            "popularity": popularity,
+            "popularity": pop,
+            "title": title,
         }
 
-    ratings_dict = {}
-    for u, i, r in ratings[["userId", "movieId", "rating"]].values:
+    ratings_dict: Dict[str, Dict[str, float]] = {}
+    for u, i, r in ratings.itertuples(index=False):
         ratings_dict.setdefault(str(u), {})[str(i)] = float(r)
 
-    print(f"✅ {len(ratings_dict)} usuarios, {len(item_categories)} ítems cargados.")
+    print(f"✅ users={len(ratings_dict)}  items={len(item_categories)}  (subset según {'ratings_small' if use_small else 'ratings'})")
     return RecsData(ratings=ratings_dict,
                     item_categories=item_categories,
                     item_meta=item_meta)

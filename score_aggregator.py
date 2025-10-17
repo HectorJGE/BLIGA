@@ -5,12 +5,47 @@ from data import RecsData, UserId, ItemId
 from prediction import predict_rating
 from sim_item_multi import item_similarity_multi
 
+
+"""
+score_aggregator.py
+-------------------
+Define cómo puntuar un ítem y un individuo combinando 3 señales:
+
+1) CF (Collaborative Filtering): predicción de rating del usuario para el ítem.
+2) Contenido (Content-based): similitud del ítem con los ítems que el usuario "amó".
+3) Popularidad: cuántos usuarios calificaron ese ítem.
+
+Luego, agrega con pesos Ω = (w_cf, w_cont, w_pop) a nivel ítem e
+individual (suma de los ítems del Top-N).
+
+Notas:
+- Se asume que 'predict_rating' devuelve ≈ [0,5]. Se recorta a ese rango.
+- 'score_content' y 'score_popularity' ya devuelven [0,1].
+- A nivel individuo se usa SUMA (no promedio). Como todos los individuos tienen
+    la misma longitud N, comparar sumas es válido.
+"""
+
 def score_cf(target_user: UserId, item: ItemId, data: RecsData) -> float:
+    """
+    Puntaje CF (0..5) para 'target_user' en 'item'.
+    - Usa la predicción colaborativa 'predict_rating'.
+    - Recorta (clamp) a [0,5] por seguridad.
+
+    NOTA: En 'aggregate_item_score' lo reescalamos a [0,1] dividiendo por 5.
+    """
+
     # normaliza a [0,5], asumiendo que predict_rating ya lo devuelve en ese rango o similar
     score = predict_rating(target_user, item, data)
     return max(0.0, min(5.0, score))
 
 def score_content(target_user: UserId, item: ItemId, data: RecsData, like_thr: float = 4.0) -> float:
+    """
+    Puntaje basado en contenido (0..1).
+    - Calcula la similitud promedio del 'item' respecto a los ítems que el usuario
+        calificó con rating >= like_thr (p.ej. 4 o 5).
+    - Si el usuario no tiene "likes" o no hay pares comparables, retorna 0.0.
+    """
+
     # promedio de similitud con ítems del usuario con rating >= like_thr
     user_r = data.ratings.get(target_user, {})
     liked = [i for i, r in user_r.items() if r >= like_thr]
@@ -19,19 +54,59 @@ def score_content(target_user: UserId, item: ItemId, data: RecsData, like_thr: f
     return sum(sims)/len(sims) if sims else 0.0
 
 def score_popularity(item: ItemId, data: RecsData) -> float:
+    """
+    Popularidad (0..1) del ítem:
+    - Cuenta cuántos usuarios distintos calificaron 'item' (cnt).
+    - Normaliza dividiendo por 'max_cnt'.
+
+    ATENCIÓN (posible mejora):
+    - Aquí 'max_cnt' se calcula como el máximo de 'len(ur)' por usuario,
+        es decir, el máximo de ÍTEMS POR USUARIO (no de USUARIOS POR ÍTEM).
+        Funciona como cota, pero no es la normalización más fiel.
+
+    Ver bloque "MEJORA OPCIONAL" más abajo para una normalización por ítem.
+    """
+
     # cuenta de usuarios que calificaron el ítem, normalizado por el máximo
     cnt = sum(1 for u, ur in data.ratings.items() if item in ur)
     max_cnt = max((len(ur) for ur in data.ratings.values()), default=1)
     return cnt / max_cnt if max_cnt else 0.0
 
-def aggregate_item_score(target_user: UserId, item: ItemId, data: RecsData,
-                         omega: Tuple[float, float, float] = (0.5, 0.3, 0.2)) -> float:
+def aggregate_item_score(
+        target_user: UserId,
+        item: ItemId,
+        data: RecsData,
+        omega: Tuple[float, float, float] = (0.5, 0.3, 0.2)
+    ) -> float:
+    """
+    Score final de un ítem (0..1 aprox.) combinando señales con pesos Ω.
+
+    Ω = (w_cf, w_cont, w_pop)
+        - w_cf   : peso de CF (predicción de rating)
+        - w_cont : peso de contenido (similitud con "likes" del usuario)
+        - w_pop  : peso de popularidad
+
+    Todos en [0,1] para la suma ponderada:
+        s_cf   ← reescalado a [0,1] (dividiendo por 5.0)
+        s_cont ← ya [0,1]
+        s_pop  ← ya [0,1]
+    """
+
     w_cf, w_cont, w_pop = omega
     s_cf = score_cf(target_user, item, data) / 5.0     # escala [0,1]
     s_cont = score_content(target_user, item, data)    # ya [0,1]
     s_pop = score_popularity(item, data)               # [0,1]
     return w_cf*s_cf + w_cont*s_cont + w_pop*s_pop
 
-def aggregate_individual(ind: List[ItemId], target_user: UserId, data: RecsData,
-                         omega: Tuple[float, float, float] = (0.5, 0.3, 0.2)) -> float:
+def aggregate_individual(
+        ind: List[ItemId], 
+        target_user: UserId, 
+        data: RecsData,
+        omega: Tuple[float, float, float] = (0.5, 0.3, 0.2)
+    ) -> float:
+    """
+    Score final de un individuo (suma de sus ítems).
+    - Se suma el 'aggregate_item_score' de cada ítem del Top-N.
+    - Como N es fijo para todos, comparar sumas es consistente.
+    """
     return sum(aggregate_item_score(target_user, i, data, omega) for i in ind)
