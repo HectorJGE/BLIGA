@@ -1,0 +1,37 @@
+{
+  "user": "1",
+  "omega": [
+    0.9130364263505323,
+    0.03325215319095141,
+    0.053711420458516276
+  ],
+  "best_ind": [
+    "146718",
+    "1235",
+    "129935",
+    "148376",
+    "171375",
+    "877",
+    "49929",
+    "106745",
+    "129358",
+    "174941"
+  ],
+  "titles": [
+    "Baby Blues",
+    "Harold and Maude",
+    "Gimme the Loot",
+    "A Small September Affair",
+    "7 Kocalı Hürmüz",
+    "Girls Town",
+    "Katzelmacher",
+    "The Stranger",
+    "The Gamers",
+    "Warm Springs"
+  ],
+  "score": 7.858279732076184,
+  "coherence": 8.3,
+  "diversity": 0.8155555555555556,
+  "pop_mean": 0.010888697903634644,
+  "novelty": 8.692764294275394
+}

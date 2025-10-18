@@ -67,7 +67,12 @@ def score_popularity(item: ItemId, data: RecsData) -> float:
     Ver bloque "MEJORA OPCIONAL" más abajo para una normalización por ítem.
     """
 
-    # cuenta de usuarios que calificaron el ítem, normalizado por el máximo
+    # Rápido: usa caché si existe
+    if hasattr(data, "item_pop") and hasattr(data, "max_item_pop"):
+        m = data.max_item_pop or 1
+        return data.item_pop.get(item, 0) / m
+
+    # Fallback (lento) si no hay índices
     cnt = sum(1 for u, ur in data.ratings.items() if item in ur)
     max_cnt = max((len(ur) for ur in data.ratings.values()), default=1)
     return cnt / max_cnt if max_cnt else 0.0

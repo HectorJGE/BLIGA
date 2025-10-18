@@ -79,13 +79,18 @@ def similarity_of_individual(
         podrías max(sim,0) en user_similarity).
     """
 
-    # Conjunto de usuarios que calificaron al menos un ítem del individuo
-    selected_users: Set[UserId] = {
-        u for u, ur in data.ratings.items() if any(i in ur for i in individual)
-    }
+    selected_users: Set[UserId] = set()
+    ubi = getattr(data, "users_by_item", None)
+    if ubi is None:
+        # fallback por si aún no construiste índices
+        selected_users = {u for u, ur in data.ratings.items() if any(i in ur for i in individual)}
+    else:
+        for i in individual:
+            selected_users |= ubi.get(i, set())
+
     total = 0.0
     for u in selected_users:
         if u == target_user:
-            continue # no nos comparamos con nosotros mismos
+            continue
         total += user_similarity(target_user, u, data.ratings)
     return total

@@ -9,80 +9,88 @@ Predice calificaciones usando la fórmula clásica de Resnick (CF basado en veci
 
     r̂(u, i) = r̄_u +  ( Σ_v sim(u, v) * (r(v, i) - r̄_v) ) / ( Σ_v |sim(u, v)| )
 
-donde:
-- r̂(u, i)   : predicción del usuario u para el ítem i
-- r̄_u       : promedio de ratings del usuario u
-- r(v, i)    : rating del vecino v sobre el ítem i
-- r̄_v       : promedio de ratings del vecino v
-- sim(u, v)  : similitud entre usuarios u y v (cualquier métrica simétrica)
-
 Notas:
-- Se centra por medias (mean-centering) para corregir sesgos de usuarios "altos" o "bajos".
-- Si no hay vecinos o el denominador queda en 0, devolvemos el promedio de u (backoff seguro).
-- No se acota la salida; si necesitás [0, 5], podés hacer clamp en el consumidor.
+- Se centra por medias (mean-centering).
+- Si no hay vecinos o el denominador queda en 0, retorna el promedio del usuario (backoff).
+- No se acota la salida; si necesitás [0,5], clampleá en el consumidor.
 """
+
+# Cache manual de similitudes usuario-usuario (clave simétrica)
+_SIM_CACHE: Dict[tuple, float] = {}
+
+def _user_sim_cached(u1: UserId, u2: UserId, ratings: Dict[UserId, Dict[ItemId, float]]) -> float:
+    """
+    Devuelve sim(u1,u2) cacheada. La clave es simétrica para no duplicar (u1,u2)/(u2,u1).
+    """
+    key = (u1, u2) if u1 <= u2 else (u2, u1)
+    val = _SIM_CACHE.get(key)
+    if val is not None:
+        return val
+    val = user_similarity(u1, u2, ratings)
+    if len(_SIM_CACHE) < 200_000:  # límite blando para evitar crecer sin fin
+        _SIM_CACHE[key] = val
+    return val
+
 
 def predict_rating(
     target_user: UserId,
     item: ItemId,
-    data: RecsData
+    data: RecsData,
+    k: int = 50,
+    min_sim: float = 0.05
 ) -> float:
     """
     Predice la calificación que el usuario activo (target_user) daría a un ítem (item),
     usando Resnick (vecinos ponderados por similitud y centrado por la media).
-
-    Parámetros
-    ----------
-    target_user : UserId
-        Usuario para el cual predecimos.
-    item : ItemId
-        Ítem objetivo.
-    data : RecsData
-        Debe proveer 'ratings' como dict[user -> dict[item -> rating]].
-
-    Return
-    ------
-    float
-        Predicción (no forzada a rango). Si no hay vecinos válidos, retorna el promedio del usuario.
     """
 
-    # 1) Vecinos: usuarios (distintos a target_user) que calificaron el ítem.
-    neighbors = [u for u, ratings in data.ratings.items() if item in ratings and u != target_user]
+    # Media del usuario objetivo (backoff seguro)
+    if hasattr(data, "user_mean"):
+        ru_mean = data.user_mean.get(target_user, 0.0)
+    else:
+        ru = data.ratings.get(target_user, {})
+        ru_mean = (sum(ru.values()) / len(ru)) if ru else 0.0
+
+    # Vecinos = usuarios que calificaron 'item'
+    if hasattr(data, "users_by_item"):
+        neighbors = [u for u in data.users_by_item.get(item, set()) if u != target_user]
+    else:
+        neighbors = [u for u, ratings in data.ratings.items() if item in ratings and u != target_user]
+
     if not neighbors:
-        # Sin evidencia: devolvemos 0.0 (podrías usar promedio global si preferís).
-        return 0.0
+        return ru_mean
 
-    # 2) Promedio del usuario activo (r̄_u). Si no tiene ratings, 0.0.
-    ru_mean = sum(data.ratings[target_user].values()) / len(data.ratings[target_user]) if data.ratings[target_user] else 0.0
+    # Similitudes con umbral y top-k por |sim|
+    sims = []
+    for u in neighbors:
+        sim = _user_sim_cached(target_user, u, data.ratings)
+        if abs(sim) >= min_sim:
+            sims.append((u, sim))
 
-    # 3) Acumular numerador y denominador de Resnick.
+    if not sims:
+        return ru_mean
+
+    sims.sort(key=lambda t: abs(t[1]), reverse=True)
+    sims = sims[:k]
+
+    # Fórmula de Resnick con centrado por media
     num = 0.0
     den = 0.0
-    for u in neighbors:
-        # Similitud entre target_user y el vecino u (definida en similarity.user_similarity).
-        sim = user_similarity(target_user, u, data.ratings)
-        if sim == 0:
-            # Vecino no informativo (o sin solapamiento): lo saltamos.
-            continue
-
-        # r(v, i): rating del vecino u para el ítem
-        ru_i = data.ratings[u][item]
-
-        # r̄_v: promedio del vecino u
-        ru_avg = sum(data.ratings[u].values()) / len(data.ratings[u])
-
-        # Numerador: sim(u,v) * (r(v,i) - r̄_v)  (mean-centering)
-        num += sim * (ru_i - ru_avg)
-
-        # Denominador: suma de magnitudes de similitud (|sim|)
+    for u, sim in sims:
+        if hasattr(data, "user_mean"):
+            rv_mean = data.user_mean.get(u, 0.0)
+        else:
+            rv = data.ratings[u]
+            rv_mean = (sum(rv.values()) / len(rv)) if rv else 0.0
+        rv_i = data.ratings[u][item]
+        num += sim * (rv_i - rv_mean)
         den += abs(sim)
-    
-    # 4) Si no hay peso total (den == 0), “caemos” al promedio del usuario activo.
-    if den == 0:
+
+    if den == 0.0:
         return ru_mean
-    
-    # 5) Predicción final: r̂(u, i)
+
     return ru_mean + (num / den)
+
 
 def predict_individual(
     individual: List[ItemId],

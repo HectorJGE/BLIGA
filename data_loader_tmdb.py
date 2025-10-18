@@ -2,6 +2,7 @@
 import pandas as pd, re
 from typing import Dict, Set, Any
 from data import RecsData, ItemId, Category
+from collections import defaultdict
 
 # Helpers rápidos (sin ast.literal_eval ni iterrows sobre 45k filas)
 def _year(s: str):
@@ -25,8 +26,19 @@ def _director(s: str):
     m = _DIRECTOR_RE.search(s)
     return m.group(1).strip() if m else None
 
+def _build_indexes(data):
+    users_by_item = defaultdict(set)
+    for u, ur in data.ratings.items():
+        for i in ur.keys():
+            users_by_item[i].add(u)
+    data.users_by_item = dict(users_by_item)
+    data.item_pop = {i: len(us) for i, us in data.users_by_item.items()}
+    data.max_item_pop = max(data.item_pop.values(), default=1)
+    data.user_mean = {u: (sum(r.values())/len(r) if r else 0.0)
+                        for u, r in data.ratings.items()}
+
 def load_tmdb_dataset(path: str = "the-movies-dataset",
-                      use_small: bool = True) -> RecsData:
+                    use_small: bool = True) -> RecsData:
     """
     Carga The Movies Dataset mapeando MovieLens→TMDB vía links(_small).csv.
     - Devuelve RecsData con claves de ítem = movieId (MovieLens)  ← importante
@@ -124,6 +136,13 @@ def load_tmdb_dataset(path: str = "the-movies-dataset",
         ratings_dict.setdefault(str(u), {})[str(i)] = float(r)
 
     print(f"✅ users={len(ratings_dict)}  items={len(item_categories)}  (subset según {'ratings_small' if use_small else 'ratings'})")
-    return RecsData(ratings=ratings_dict,
-                    item_categories=item_categories,
-                    item_meta=item_meta)
+    data = RecsData(
+        ratings=ratings_dict,
+        item_categories=item_categories,
+        item_meta=item_meta
+    )
+
+    # 👉 construir índices/cachés aquí
+    _build_indexes(data)
+
+    return data

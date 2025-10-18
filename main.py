@@ -6,7 +6,7 @@ from population import select_top_by_correlation_multi
 from operators import one_point_crossover, mutate
 from similarity import similarity_of_individual
 from score_aggregator import aggregate_individual
-from adaptive import schedule_rates
+from adaptive import schedule_rates, indiv_rates, temperature, accept_with_sa
 
 """
 Pipeline BLIGA (versión simplificada/extendida):
@@ -64,14 +64,15 @@ def neighbor_rated_unrated_items(data, user):
 
 def run_bliga(
     target_user: str,
-    use_small: bool = True,
+    use_small: bool = False,
     M: int = 20,
     N: int = 10,
     topX: float = 0.5,
     maxGen: int = 6,
     crossoverP: float = 0.9,
     mutP: float = 0.3,
-    seed: int = 42
+    seed: int = 42,
+    return_population: bool = False,
 ):
     """
     Ejecuta el flujo principal tipo BLIGA: genera Top-N recomendaciones con un GA.
@@ -110,6 +111,19 @@ def run_bliga(
     # 1) Cargar dataset (TMDB/MovieLens) con metadatos y estructura de ratings
     data = load_tmdb_dataset(path=str(DATASET_DIR), use_small=use_small)
 
+    # Si el loader aún no construyó índices/cachés, hacelo acá:
+    if not hasattr(data, "users_by_item"):
+        from collections import defaultdict
+        users_by_item = defaultdict(set)
+        for u, ur in data.ratings.items():
+            for i in ur.keys():
+                users_by_item[i].add(u)
+        data.users_by_item = dict(users_by_item)
+        data.item_pop = {i: len(us) for i, us in data.users_by_item.items()}
+        data.max_item_pop = max(data.item_pop.values(), default=1)
+        data.user_mean = {u: (sum(r.values())/len(r) if r else 0.0)
+                        for u, r in data.ratings.items()}
+
     # Validaciones iniciales de usuario/candidatos
     if target_user not in data.ratings:
         raise ValueError(f"target_user {target_user!r} no existe. Ejemplos: {list(data.ratings.keys())[:10]}")
@@ -130,26 +144,44 @@ def run_bliga(
         #      con el perfil del usuario y entre sí, según tu implementación de 'population.py'.
         best = select_top_by_correlation_multi(population, data, topX)
 
-        # 4.2) Tasas adaptativas (p_c, p_m) según número de generación (enfriamiento/cronograma)
-        #      Típicamente: p_c alto al inicio para explorar y p_m ajustado para mantener diversidad.
-        pc, pm = schedule_rates(gen, maxGen, pc_max=crossoverP, pm_max=mutP)
+        # 4.2) Tasas globales por generación (topes suaves)
+        pc_global, pm_global = schedule_rates(gen, maxGen, pc_max=crossoverP, pm_max=mutP)
 
-        # 4.3) Elitismo: arrancamos la nueva población con los mejores
-        new_pop = best[:]
+        # 4.3) Fitness para AGA/MGA: usamos similarity_of_individual como fitness
+        parent_scores = [(ind, similarity_of_individual(ind, data, target_user)) for ind in best]
+        parent_scores.sort(key=lambda t: t[1], reverse=True)
+        f_best = parent_scores[0][1] if parent_scores else 0.0
+        parents = [ind for ind, _ in parent_scores]
 
-        # 4.4) Rellenar la población aplicando cruce + mutación sobre la élite
+        # Temperatura para SA (cooling)
+        T = temperature(gen, T0=1.0, shrink=0.10)
+
+        # 4.4) Elitismo + relleno con AGA (tasas por individuo) + aceptación SA
+        new_pop = parents[:]
         while len(new_pop) < M:
-            # Seleccionamos dos padres al azar entre los mejores (torneo simple implícito)
-            p1, p2 = rng.choice(best), rng.choice(best)
+            p1 = rng.choice(parents)
+            p2 = rng.choice(parents)
 
-            # Cruce 1-punto con probabilidad pc; si no, clonamos p1 (explotación)
-            child = one_point_crossover(p1, p2, rng) if rng.random() < pc else p1[:]
+            # Fitness del padre principal (referencia)
+            f_p1 = similarity_of_individual(p1, data, target_user)
 
-            # Mutación sobre el hijo usando SOLO candidatos válidos (mantiene factibilidad)
-            child = mutate(child, candidates, pm, rng)   # <- SOLO candidatos válidos
-            
-            # Evita duplicar individuos exactos en la misma generación
-            if child not in new_pop:
+            # Tasas por individuo (acotadas por los topes globales)
+            pc_i, pm_i = indiv_rates(
+                f_p1, f_best,
+                pc_max=pc_global, pc_min=0.5*pc_global,
+                pm_max=pm_global, pm_min=0.5*pm_global
+            )
+
+            # Cruce probabilístico
+            child = one_point_crossover(p1, p2, rng) if rng.random() < pc_i else p1[:]
+
+            # Mutación con tasa individual
+            child = mutate(child, candidates, pm_i, rng)
+
+            # Aceptación con SA si es peor; si es mejor, siempre entra
+            f_child = similarity_of_individual(child, data, target_user)
+            delta = f_p1 - f_child  # >0 si el hijo es peor
+            if accept_with_sa(delta, T, rng) and (child not in new_pop):
                 new_pop.append(child)
 
         # 4.5) Re-rank por similitud al usuario objetivo
@@ -173,6 +205,9 @@ def run_bliga(
     scored.sort(key=lambda t: t[1], reverse=True)
 
     best_ind, best_score = scored[0]
+    
+    if return_population:
+        return data, best_ind, best_score, population
     return data, best_ind, best_score
 
 if __name__ == "__main__":
