@@ -1,10 +1,8 @@
-
 # bliga/score_aggregator.py
 from typing import Dict, List, Tuple
 from data import RecsData, UserId, ItemId
 from prediction import predict_rating
 from sim_item_multi import item_similarity_multi
-
 
 """
 score_aggregator.py
@@ -17,101 +15,106 @@ Define cómo puntuar un ítem y un individuo combinando 3 señales:
 
 Luego, agrega con pesos Ω = (w_cf, w_cont, w_pop) a nivel ítem e
 individual (suma de los ítems del Top-N).
-
-Notas:
-- Se asume que 'predict_rating' devuelve ≈ [0,5]. Se recorta a ese rango.
-- 'score_content' y 'score_popularity' ya devuelven [0,1].
-- A nivel individuo se usa SUMA (no promedio). Como todos los individuos tienen
-    la misma longitud N, comparar sumas es válido.
 """
 
-def score_cf(target_user: UserId, item: ItemId, data: RecsData) -> float:
+def score_cf(
+    target_user: UserId,
+    item: ItemId,
+    data: RecsData,
+    *,
+    cm=None,
+    um=None
+) -> float:
     """
     Puntaje CF (0..5) para 'target_user' en 'item'.
-    - Usa la predicción colaborativa 'predict_rating'.
-    - Recorta (clamp) a [0,5] por seguridad.
-
-    NOTA: En 'aggregate_item_score' lo reescalamos a [0,1] dividiendo por 5.
+    Intenta pasar 'user_means' si la firma de predict_rating lo soporta;
+    de lo contrario, cae al llamado sin ese argumento.
     """
-
-    # normaliza a [0,5], asumiendo que predict_rating ya lo devuelve en ese rango o similar
-    score = predict_rating(target_user, item, data)
+    try:
+        score = predict_rating(target_user, item, data, user_means=um)  # puede no existir el kwarg
+    except TypeError:
+        score = predict_rating(target_user, item, data)
     return max(0.0, min(5.0, score))
 
-def score_content(target_user: UserId, item: ItemId, data: RecsData, like_thr: float = 4.0) -> float:
+
+def score_content(
+    target_user: UserId,
+    item: ItemId,
+    data: RecsData,
+    like_thr: float = 4.0,
+    *,
+    cm=None
+) -> float:
     """
     Puntaje basado en contenido (0..1).
-    - Calcula la similitud promedio del 'item' respecto a los ítems que el usuario
-        calificó con rating >= like_thr (p.ej. 4 o 5).
-    - Si el usuario no tiene "likes" o no hay pares comparables, retorna 0.0.
+    Si 'cm' está disponible, calcula similitud TF-IDF promedio entre
+    el ítem y los ítems que el usuario calificó con rating >= like_thr.
+    Caso contrario, usa 'item_similarity_multi' (fallback colaborativo/semántico).
     """
-
-    # promedio de similitud con ítems del usuario con rating >= like_thr
     user_r = data.ratings.get(target_user, {})
     liked = [i for i, r in user_r.items() if r >= like_thr]
-    if not liked: return 0.0
+    if not liked:
+        return 0.0
+
+    if cm is not None:
+        import numpy as np
+        vec_item = cm.item_vector(item)
+        if vec_item is None:
+            return 0.0
+        vecs_liked = [cm.item_vector(li) for li in liked if cm.item_vector(li) is not None]
+        if not vecs_liked:
+            return 0.0
+        sims = [float(vec_item @ v) for v in vecs_liked]
+        return float(np.mean(sims)) if sims else 0.0
+
     sims = [item_similarity_multi(item, li, data) for li in liked if li != item]
-    return sum(sims)/len(sims) if sims else 0.0
+    return sum(sims) / len(sims) if sims else 0.0
+
 
 def score_popularity(item: ItemId, data: RecsData) -> float:
     """
-    Popularidad (0..1) del ítem:
-    - Cuenta cuántos usuarios distintos calificaron 'item' (cnt).
-    - Normaliza dividiendo por 'max_cnt'.
-
-    ATENCIÓN (posible mejora):
-    - Aquí 'max_cnt' se calcula como el máximo de 'len(ur)' por usuario,
-        es decir, el máximo de ÍTEMS POR USUARIO (no de USUARIOS POR ÍTEM).
-        Funciona como cota, pero no es la normalización más fiel.
-
-    Ver bloque "MEJORA OPCIONAL" más abajo para una normalización por ítem.
+    Popularidad (0..1) del ítem basada en conteo de usuarios que lo calificaron.
+    Usa índices precalculados si están en 'data'.
     """
-
-    # Rápido: usa caché si existe
     if hasattr(data, "item_pop") and hasattr(data, "max_item_pop"):
         m = data.max_item_pop or 1
         return data.item_pop.get(item, 0) / m
-
-    # Fallback (lento) si no hay índices
     cnt = sum(1 for u, ur in data.ratings.items() if item in ur)
     max_cnt = max((len(ur) for ur in data.ratings.values()), default=1)
     return cnt / max_cnt if max_cnt else 0.0
 
+
 def aggregate_item_score(
-        target_user: UserId,
-        item: ItemId,
-        data: RecsData,
-        omega: Tuple[float, float, float] = (0.5, 0.3, 0.2)
-    ) -> float:
+    target_user: UserId,
+    item: ItemId,
+    data: RecsData,
+    omega: Tuple[float, float, float] = (0.5, 0.3, 0.2),
+    *,
+    cm=None,
+    um=None
+) -> float:
     """
-    Score final de un ítem (0..1 aprox.) combinando señales con pesos Ω.
-
-    Ω = (w_cf, w_cont, w_pop)
-        - w_cf   : peso de CF (predicción de rating)
-        - w_cont : peso de contenido (similitud con "likes" del usuario)
-        - w_pop  : peso de popularidad
-
-    Todos en [0,1] para la suma ponderada:
-        s_cf   ← reescalado a [0,1] (dividiendo por 5.0)
-        s_cont ← ya [0,1]
-        s_pop  ← ya [0,1]
+    Score final de un ítem combinando señales con pesos Ω.
+    Si se proveen 'cm' y/o 'um', se usan (modelo cacheado).
     """
-
     w_cf, w_cont, w_pop = omega
-    s_cf = score_cf(target_user, item, data) / 5.0     # escala [0,1]
-    s_cont = score_content(target_user, item, data)    # ya [0,1]
-    s_pop = score_popularity(item, data)               # [0,1]
-    return w_cf*s_cf + w_cont*s_cont + w_pop*s_pop
+    s_cf = score_cf(target_user, item, data, cm=cm, um=um) / 5.0
+    s_cont = score_content(target_user, item, data, cm=cm)
+    s_pop = score_popularity(item, data)
+    return w_cf * s_cf + w_cont * s_cont + w_pop * s_pop
+
 
 def aggregate_individual(
-        ind: List[ItemId], 
-        target_user: UserId, 
-        data: RecsData,
-        omega: Tuple[float, float, float] = (0.5, 0.3, 0.2)
-    ) -> float:
+    ind: List[ItemId],
+    target_user: UserId,
+    data: RecsData,
+    omega: Tuple[float, float, float] = (0.5, 0.3, 0.2),
+    *,
+    cm=None,
+    um=None
+) -> float:
     """
-    Score final de un individuo (suma de sus ítems).
-    - Se suma el 'aggregate_item_score' de cada ítem del Top-N.
-    - Como N es fijo para todos, comparar sumas es consistente.
+    Score final de un individuo (suma de los ítems).
+    Admite cm/um para cálculo híbrido.
     """
-    return sum(aggregate_item_score(target_user, i, data, omega) for i in ind)
+    return sum(aggregate_item_score(target_user, i, data, omega, cm=cm, um=um) for i in ind)

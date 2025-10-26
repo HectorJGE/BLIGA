@@ -14,7 +14,14 @@ Como todos los individuos tienen el mismo tamaño N, comparar sumas es válido.
 Si N variara entre individuos, convendría NORMALIZAR por el número de pares C(N,2).
 """
 
-def correlation_of_individual_multi(ind: List[ItemId], data: RecsData) -> float:
+def correlation_of_individual_multi(
+    ind: List[ItemId],
+    data: RecsData,
+    *,
+    cm=None,
+    um=None,
+    **kwargs
+) -> float:
     """
     Calcula la correlación interna de un individuo con una similitud multi-señal.
 

@@ -6,32 +6,32 @@
     0.053711420458516276
   ],
   "best_ind": [
-    "146718",
-    "1235",
-    "129935",
-    "148376",
-    "171375",
-    "877",
-    "49929",
-    "106745",
-    "129358",
-    "174941"
+    "31038",
+    "128095",
+    "91362",
+    "160209",
+    "125273",
+    "2145",
+    "51503",
+    "45",
+    "1953",
+    "387"
   ],
   "titles": [
-    "Baby Blues",
-    "Harold and Maude",
-    "Gimme the Loot",
-    "A Small September Affair",
-    "7 Kocalı Hürmüz",
-    "Girls Town",
-    "Katzelmacher",
-    "The Stranger",
-    "The Gamers",
-    "Warm Springs"
+    "Smooth Talk",
+    "Kathleen Madigan: Gone Madigan",
+    "Rings on Her Fingers",
+    "The Resurrection of Jake the Snake",
+    "Tenchu!",
+    "Pretty in Pink",
+    "Wise Guys",
+    "To Die For",
+    "The French Connection",
+    "A Low Down Dirty Shame"
   ],
-  "score": 7.858279732076184,
-  "coherence": 8.3,
-  "diversity": 0.8155555555555556,
-  "pop_mean": 0.010888697903634644,
-  "novelty": 8.692764294275394
+  "score": 8.033421385940573,
+  "coherence": 4.614784946236559,
+  "diversity": 0.8974492234169653,
+  "pop_mean": 0.03190348233809467,
+  "novelty": 6.534385474034394
 }
